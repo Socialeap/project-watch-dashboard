@@ -1,0 +1,7 @@
+{
+  "name": "Project Watch - Dashboard",
+  "description": "Visualizes project health from Google Sheets, calculating project rot and providing AI-powered insights.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

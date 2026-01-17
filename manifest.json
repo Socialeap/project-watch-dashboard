@@ -1,0 +1,15 @@
+{
+  "short_name": "ProjectWatch",
+  "name": "Project Watcher Dashboard",
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#0f172a",
+  "background_color": "#0f172a",
+  "icons": [
+    {
+      "src": "https://www.gstatic.com/images/branding/product/2x/sheets_2020q4_48dp.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    }
+  ]
+}
