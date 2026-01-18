@@ -12,6 +12,7 @@ import {
 } from '../services/geminiService';
 import { searchProjectsInSheet } from '../services/dataService';
 import { Chat } from "@google/genai";
+import { VoiceRecoverySheet } from './VoiceRecoverySheet';
 
 interface AIInsightsProps {
   projects: ProjectAnalysis[];
@@ -29,6 +30,7 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
   
   const [liveTranscription, setLiveTranscription] = useState('');
   const [isLiveActive, setIsLiveActive] = useState(false);
+  const [showVoiceRecovery, setShowVoiceRecovery] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -68,6 +70,8 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      await inputCtx.resume();
+      await outputCtx.resume();
       audioContextRef.current = inputCtx;
       outputAudioContextRef.current = outputCtx;
       setIsLiveActive(true);
@@ -77,6 +81,7 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
         onAudioChunk: async (base64) => {
           const ctx = outputAudioContextRef.current;
           if (!ctx) return;
+          if (ctx.state === 'suspended') await ctx.resume();
           nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
           const audioBuffer = await decodeAudioData(decodeBase64(base64), ctx, 24000, 1);
           const source = ctx.createBufferSource();
@@ -107,9 +112,12 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
         if (liveSessionRef.current) liveSessionRef.current.sendRealtimeInput({ media: { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' } });
       };
       source.connect(processor);
-      processor.connect(inputCtx.destination);
+      const gainNode = inputCtx.createGain();
+      gainNode.gain.value = 0;
+      processor.connect(gainNode);
+      gainNode.connect(inputCtx.destination);
     } catch (err) {
-      alert("Microphone required for analyst voice mode.");
+      setShowVoiceRecovery(true);
     }
   };
 
@@ -145,6 +153,33 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
 
   return (
     <>
+      <style>{`
+        @keyframes voiceWave {
+          0%, 100% { height: 10%; opacity: 0.3; }
+          50% { height: 100%; opacity: 1; }
+        }
+        .voice-bar {
+          transition: opacity 0.2s ease;
+        }
+        .voice-bar.active {
+          animation: voiceWave 1.2s infinite ease-in-out;
+        }
+      `}</style>
+      {showVoiceRecovery && (
+        <VoiceRecoverySheet
+          open={showVoiceRecovery}
+          onRetry={() => {
+            setShowVoiceRecovery(false);
+            startLiveMode();
+          }}
+          onRecordFallback={() => {
+            setShowVoiceRecovery(false);
+          }}
+          onReset={() => {
+            setShowVoiceRecovery(false);
+          }}
+        />
+      )}
       <div className="fixed inset-0 md:inset-auto md:bottom-32 md:right-10 w-full md:w-[450px] h-[100dvh] md:h-[750px] bg-slate-900 md:rounded-3xl shadow-2xl border-t md:border-4 border-slate-800 z-[60] flex flex-col overflow-hidden animate-[slideUp_0.3s_ease-out]">
         
         <div className="bg-slate-950 border-b-2 border-slate-800 p-6 flex justify-between items-center shrink-0">
@@ -180,9 +215,17 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
         <div className="flex-1 flex flex-col min-h-0 bg-slate-950/80">
           {isLiveMode ? (
             <div className="flex-1 flex flex-col items-center justify-center p-12 space-y-10 text-center relative">
-                <div className="flex items-end justify-center gap-3 h-32 w-full max-w-[250px]">
-                  {[...Array(15)].map((_, i) => (
-                    <div key={i} className="flex-1 bg-indigo-500 rounded-full transition-all duration-75" style={{ height: isLiveActive ? `${10 + Math.random() * 90}%` : '8%', opacity: isLiveActive ? 0.6 + Math.random() * 0.4 : 0.2 }}></div>
+                <div className="flex items-center justify-center gap-3 h-32 w-full max-w-[250px]">
+                  {[...Array(9)].map((_, i) => (
+                    <div
+                      key={i}
+                      className={`voice-bar flex-1 bg-indigo-500 rounded-full ${isLiveActive ? 'active' : ''}`}
+                      style={{
+                        opacity: isLiveActive ? 1 : 0.2,
+                        animationDelay: `${i * 0.15}s`,
+                        animationDuration: '1.2s'
+                      }}
+                    />
                   ))}
                 </div>
                 <div className="space-y-4">
