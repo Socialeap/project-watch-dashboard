@@ -38,6 +38,8 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
   const nextStartTimeRef = useRef(0);
   const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const liveSessionRef = useRef<any>(null);
+  const sessionReadyRef = useRef(false);
+  const audioBufferQueueRef = useRef<Uint8Array[]>([]);
 
   useEffect(() => {
     if (projects.length > 0) {
@@ -54,6 +56,8 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
   const stopLiveMode = () => {
     setIsLiveActive(false);
     setIsLiveMode(false);
+    sessionReadyRef.current = false;
+    audioBufferQueueRef.current = [];
     if (liveSessionRef.current) liveSessionRef.current.close();
     if (audioContextRef.current) audioContextRef.current.close();
     activeSourcesRef.current.forEach(s => s.stop());
@@ -67,6 +71,8 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
 
   const startLiveMode = async () => {
     try {
+      sessionReadyRef.current = false;
+      audioBufferQueueRef.current = [];
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
@@ -102,14 +108,68 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
         onError: (e) => { console.error(e); stopLiveMode(); }
       });
 
+      // Establish the live session first, then mark it ready after a short stabilization window.
       liveSessionRef.current = await sessionPromise;
+
+      // Some realtime clients expose an explicit start/resume method; call if present.
+      try {
+        const s: any = liveSessionRef.current;
+        if (s?.start) await s.start();
+        if (s?.resume) await s.resume();
+      } catch {
+        // ignore optional start hooks
+      }
+
+      // IMPORTANT: Give the websocket/stream a brief moment to enter a writable "listening" state
+      // (prevents early audio frames from being silently dropped on mobile/PWA).
+      await new Promise((r) => setTimeout(r, 300));
+      sessionReadyRef.current = true;
+
+      // Flush any buffered frames captured during the warm-up window.
+      const queued = audioBufferQueueRef.current;
+      audioBufferQueueRef.current = [];
+      for (const frame of queued) {
+        try {
+          (liveSessionRef.current as any)?.sendRealtimeInput?.({
+            media: { data: encode(frame), mimeType: 'audio/pcm;rate=16000' },
+          });
+        } catch {
+          // If the session can't accept frames yet, re-buffer a small tail and stop flushing.
+          audioBufferQueueRef.current.push(frame);
+          break;
+        }
+      }
+
       const source = inputCtx.createMediaStreamSource(stream);
       const processor = inputCtx.createScriptProcessor(4096, 1, 1);
       processor.onaudioprocess = (e) => {
         const inputData = e.inputBuffer.getChannelData(0);
+
+        // Convert float32 [-1,1] -> int16 with clamping
         const int16 = new Int16Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) int16[i] = inputData[i] * 32768;
-        if (liveSessionRef.current) liveSessionRef.current.sendRealtimeInput({ media: { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' } });
+        for (let i = 0; i < inputData.length; i++) {
+          const s = Math.max(-1, Math.min(1, inputData[i]));
+          int16[i] = s < 0 ? s * 32768 : s * 32767;
+        }
+
+        const frame = new Uint8Array(int16.buffer);
+
+        // If session isn't ready yet, buffer a small amount of audio and return.
+        if (!sessionReadyRef.current) {
+          const q = audioBufferQueueRef.current;
+          q.push(frame);
+          // Keep only the most recent ~1–2 seconds worth of frames (prevents unbounded growth)
+          if (q.length > 25) q.splice(0, q.length - 25);
+          return;
+        }
+
+        // Send realtime audio frame
+        const s: any = liveSessionRef.current;
+        if (s?.sendRealtimeInput) {
+          s.sendRealtimeInput({
+            media: { data: encode(frame), mimeType: 'audio/pcm;rate=16000' },
+          });
+        }
       };
       source.connect(processor);
       const gainNode = inputCtx.createGain();
