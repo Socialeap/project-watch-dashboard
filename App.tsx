@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { ProjectAnalysis, ProjectStatus, RotLevel } from './types';
 import { fetchProjects, analyzeProjects, updateProjectStatus, updateProjectDetails } from './services/dataService';
-import { initGoogleClient, handleSignOut, HARDCODED_CLIENT_ID } from './services/authService';
+import { initGoogleClient, handleSignOut } from './services/authService';
 import { ProjectCard } from './components/ProjectCard';
 import { AIInsights } from './components/AIInsights';
 import { LoginScreen } from './components/LoginScreen';
@@ -12,16 +12,17 @@ type SortOrder = 'DEFAULT' | 'FRESH_FIRST' | 'NEGLECTED_FIRST' | 'ABANDONED_FIRS
 
 const App: React.FC = () => {
   const getStoredId = () => {
-    const stored = localStorage.getItem('google_client_id');
-    if (stored) return stored;
-
-    if (import.meta.env.VITE_GOOGLE_CLIENT_ID) {
+    // In production, ALWAYS use the Netlify environment variable
+    if (import.meta.env.PROD && import.meta.env.VITE_GOOGLE_CLIENT_ID) {
       return import.meta.env.VITE_GOOGLE_CLIENT_ID;
     }
 
-    return (HARDCODED_CLIENT_ID as string) !== 'YOUR_CLIENT_ID_STRING_HERE'
-      ? HARDCODED_CLIENT_ID
-      : '';
+    // Local development override (optional)
+    const stored = localStorage.getItem('google_client_id');
+    if (stored) return stored;
+
+    // Final fallback
+    return import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
   };
 
   const [clientId, setClientId] = useState<string>(getStoredId());
