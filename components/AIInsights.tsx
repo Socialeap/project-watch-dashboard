@@ -130,9 +130,24 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
       audioBufferQueueRef.current = [];
       for (const frame of queued) {
         try {
-          (liveSessionRef.current as any)?.sendRealtimeInput?.({
-            media: { data: encode(frame), mimeType: 'audio/pcm;rate=16000' },
-          });
+          const s: any = liveSessionRef.current;
+          if (s && typeof s.send === 'function') {
+            s.send({
+              realtimeInput: {
+                mediaChunks: [
+                  {
+                    mimeType: 'audio/pcm;rate=16000',
+                    data: encode(frame),
+                  },
+                ],
+              },
+            });
+          } else if (s?.sendRealtimeInput) {
+            // Forward-compat fallback (if SDK adds this helper in the future)
+            s.sendRealtimeInput({
+              media: { data: encode(frame), mimeType: 'audio/pcm;rate=16000' },
+            });
+          }
         } catch {
           // If the session can't accept frames yet, re-buffer a small tail and stop flushing.
           audioBufferQueueRef.current.push(frame);
@@ -165,7 +180,19 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
 
         // Send realtime audio frame
         const s: any = liveSessionRef.current;
-        if (s?.sendRealtimeInput) {
+        if (s && typeof s.send === 'function') {
+          s.send({
+            realtimeInput: {
+              mediaChunks: [
+                {
+                  mimeType: 'audio/pcm;rate=16000',
+                  data: encode(frame),
+                },
+              ],
+            },
+          });
+        } else if (s?.sendRealtimeInput) {
+          // Forward-compat fallback
           s.sendRealtimeInput({
             media: { data: encode(frame), mimeType: 'audio/pcm;rate=16000' },
           });
