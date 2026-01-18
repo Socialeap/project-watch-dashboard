@@ -14,7 +14,14 @@ const App: React.FC = () => {
   const getStoredId = () => {
     const stored = localStorage.getItem('google_client_id');
     if (stored) return stored;
-    return (HARDCODED_CLIENT_ID as string) !== 'YOUR_CLIENT_ID_STRING_HERE' ? HARDCODED_CLIENT_ID : '';
+
+    if (import.meta.env.VITE_GOOGLE_CLIENT_ID) {
+      return import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    }
+
+    return (HARDCODED_CLIENT_ID as string) !== 'YOUR_CLIENT_ID_STRING_HERE'
+      ? HARDCODED_CLIENT_ID
+      : '';
   };
 
   const [clientId, setClientId] = useState<string>(getStoredId());
