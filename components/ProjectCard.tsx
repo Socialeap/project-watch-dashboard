@@ -160,7 +160,7 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({ analysis, onStatusChan
              />
         ) : (
             <div className="mb-8">
-                <h3 className="font-black text-2xl text-white leading-[1.1] break-words tracking-tighter group-hover/card:text-indigo-200 transition-colors">
+                <h3 className="font-medium text-2xl text-white leading-snug break-words tracking-wide group-hover/card:text-indigo-200 transition-colors">
                   {project.name}
                 </h3>
             </div>
