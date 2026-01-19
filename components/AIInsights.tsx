@@ -75,6 +75,7 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
       };
 
       recorder.onstop = async () => {
+        console.log("VOICE CLIP SIZE:", recordedChunksRef.current.length);
         try {
           setIsClipProcessing(true);
           stream.getTracks().forEach(t => t.stop());
