@@ -35,7 +35,7 @@ export const sendVoiceMessage = async (
   audioBlob: Blob,
   chatSession: any,
   onToolCall?: (name: string, args: any) => Promise<any>
-) => {
+): Promise<{ transcript: string; response: string }> => {
   // Convert audio to base64
   const reader = new FileReader();
   const audioBase64 = await new Promise<string>((resolve, reject) => {
@@ -47,10 +47,13 @@ export const sendVoiceMessage = async (
     reader.readAsDataURL(audioBlob);
   });
 
-  const messages = chatSession.history.map((m: any) => ({
+  const messages = chatSession?.history?.map((m: any) => ({
     role: m.role,
     parts: [{ text: m.parts?.[0]?.text || '' }],
-  }));
+  })) || [];
+
+  // TODO: Remove this log after debugging
+  console.log('[sendVoiceMessage] Sending to /.netlify/functions/gemini');
 
   const res = await fetch('/.netlify/functions/gemini', {
     method: 'POST',
@@ -61,15 +64,29 @@ export const sendVoiceMessage = async (
     }),
   });
 
-  if (!res.ok) {
-    throw new Error('Voice request failed');
+  // TODO: Remove this log after debugging
+  console.log('[sendVoiceMessage] Response status:', res.status, res.statusText);
+
+  let data: any;
+  try {
+    data = await res.json();
+    // TODO: Remove this log after debugging
+    console.log('[sendVoiceMessage] Parsed response:', data);
+  } catch (parseError) {
+    console.error('[sendVoiceMessage] Failed to parse JSON:', parseError);
+    throw new Error('Invalid response from server');
   }
 
-  const data = await res.json();
+  if (!res.ok) {
+    // Server returned an error, but we have structured JSON
+    console.error('[sendVoiceMessage] Server error:', data.error || data.response);
+    throw new Error(data.response || data.error || 'Voice request failed');
+  }
 
+  // Return the response in expected shape
   return {
-    transcript: '🎤 Voice message',
-    response: data.text,
+    transcript: data.transcript || '🎤 Voice message',
+    response: data.response || '',
   };
 };
 
