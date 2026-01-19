@@ -35,20 +35,36 @@ export const handler: Handler = async (event) => {
     }
 
     const ai = new GoogleGenAI({ apiKey });
-    const model = ai.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
-    const chat = model.startChat({ history: messages || [] });
+    // Build conversation history as content parts
+    const historyParts = (messages || []).map((m: any) => ({
+      role: m.role,
+      parts: m.parts || [{ text: '' }],
+    }));
 
-    const result = await chat.sendMessage([
+    // Add the new audio message
+    const contents = [
+      ...historyParts,
       {
-        inlineData: {
-          mimeType: 'audio/webm',
-          data: audioBase64,
-        },
+        role: 'user',
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'audio/webm',
+              data: audioBase64,
+            },
+          },
+        ],
       },
-    ]);
+    ];
 
-    const responseText = result.response.text();
+    // Use the correct @google/genai API
+    const result = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents,
+    });
+
+    const responseText = result.text || '';
 
     // TODO: Remove this log after debugging
     console.log('[gemini] Success response:', JSON.stringify({ transcript: '🎤 Voice message', response: responseText }));
