@@ -190,6 +190,51 @@ export const connectToLiveAnalyst = async (
 };
 
 /**
+ * Transcribes a recorded voice clip (MediaRecorder) into plain text.
+ * This avoids fragile realtime mic streaming and is far more reliable across browsers.
+ */
+export const transcribeVoiceClip = async (
+  audioBytes: Uint8Array,
+  mimeType: string
+): Promise<string> => {
+  const apiKey = getApiKey();
+  if (!apiKey) return "";
+
+  const ai = new GoogleGenAI({ apiKey });
+
+  try {
+    const response = await ai.models.generateContent({
+      model: TEXT_MODEL,
+      contents: [
+        {
+          parts: [
+            {
+              text:
+                "Transcribe the user's spoken question into plain text. " +
+                "Return ONLY the transcription. Do not add commentary.",
+            },
+            {
+              inlineData: {
+                mimeType,
+                data: encode(audioBytes),
+              },
+            },
+          ],
+        },
+      ],
+      config: {
+        temperature: 0.0,
+      },
+    });
+
+    return (response.text || "").trim();
+  } catch (error) {
+    console.error("Transcription Error:", error);
+    return "";
+  }
+};
+
+/**
  * Generates Audio from text using Gemini TTS (One-off)
  */
 export const generateSpeech = async (text: string): Promise<Uint8Array | null> => {
