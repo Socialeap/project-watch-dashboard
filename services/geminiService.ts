@@ -5,13 +5,12 @@ import { ProjectAnalysis, ProjectStatus } from "../types";
 // Model for text and multimodal operations
 const TEXT_MODEL = 'gemini-2.0-flash';
 
-const getApiKey = () => {
-  const key = import.meta.env.VITE_GEMINI_API_KEY;
-  if (!key || key.length < 20) {
-    console.error("Gemini API key missing at runtime");
-    return undefined;
+const getApiKey = (): string => {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing Gemini API key");
   }
-  return key;
+  return apiKey;
 };
 
 // Tool Definition for searching the spreadsheet

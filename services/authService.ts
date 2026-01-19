@@ -7,8 +7,6 @@ declare global {
   }
 }
 
-// Fallback constant - valid if hardcoded, ignored if passed dynamically
-export const HARDCODED_CLIENT_ID = 'YOUR_CLIENT_ID_STRING_HERE'; 
 
 const SCOPES = 'https://www.googleapis.com/auth/spreadsheets';
 const DISCOVERY_DOC = 'https://sheets.googleapis.com/$discovery/rest?version=v4';
