@@ -204,7 +204,7 @@ export const transcribeVoiceClip = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: TEXT_MODEL,
+      model: 'gemini-2.0-flash-exp',
       contents: [
         {
           parts: [
