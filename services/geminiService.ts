@@ -1,11 +1,9 @@
 
-import { GoogleGenAI, Chat, Modality, LiveServerMessage, Type, FunctionDeclaration } from "@google/genai";
+import { GoogleGenAI, Chat, Type, FunctionDeclaration } from "@google/genai";
 import { ProjectAnalysis, ProjectStatus } from "../types";
 
-// Recommended models
-const TEXT_MODEL = 'gemini-3-flash-preview';
-const TTS_MODEL = 'gemini-2.5-flash-preview-tts';
-const LIVE_MODEL = 'gemini-2.5-flash-native-audio-preview-09-2025';
+// Model for text and multimodal operations
+const TEXT_MODEL = 'gemini-2.0-flash';
 
 const getApiKey = () => {
   const key = import.meta.env.VITE_GEMINI_API_KEY;
@@ -105,8 +103,6 @@ export const sendChatMessage = async (chat: Chat | null, message: string, onTool
       
       // Send results back to model to get final text
       const secondResponse = await chat.sendMessage({
-         // In @google/genai, sending tool responses back often requires standard message formatting
-         // but for this implementation we assume the standard sendMessage handles the turn if it returned calls.
          message: `Here are the search results: ${JSON.stringify(toolResults)}`
       });
       return secondResponse.text || "I found the data but couldn't summarize it.";
@@ -119,72 +115,8 @@ export const sendChatMessage = async (chat: Chat | null, message: string, onTool
 };
 
 /**
- * Connects to the Live Voice Session
- */
-export const connectToLiveAnalyst = async (
-  projects: ProjectAnalysis[],
-  callbacks: {
-    onAudioChunk: (base64: string) => void;
-    onInterrupted: () => void;
-    onTranscription: (text: string, isUser: boolean) => void;
-    onTurnComplete: () => void;
-    onClose: () => void;
-    onError: (e: any) => void;
-    onToolCall: (fc: any) => Promise<any>;
-  }
-) => {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("API Key missing");
-
-  const ai = new GoogleGenAI({ apiKey });
-  
-  const sessionPromise = ai.live.connect({
-    model: LIVE_MODEL,
-    callbacks: {
-      onopen: () => console.log("Live connection opened"),
-      onmessage: async (message: LiveServerMessage) => {
-        if (message.serverContent?.modelTurn?.parts[0]?.inlineData?.data) {
-          callbacks.onAudioChunk(message.serverContent.modelTurn.parts[0].inlineData.data);
-        }
-        if (message.toolCall) {
-          for (const fc of message.toolCall.functionCalls) {
-            const result = await callbacks.onToolCall(fc);
-            const session = await sessionPromise;
-            session.sendToolResponse({
-              functionResponses: [{
-                id: fc.id,
-                name: fc.name,
-                response: { result },
-              }]
-            });
-          }
-        }
-        if (message.serverContent?.interrupted) callbacks.onInterrupted();
-        if (message.serverContent?.outputTranscription) callbacks.onTranscription(message.serverContent.outputTranscription.text, false);
-        if (message.serverContent?.inputTranscription) callbacks.onTranscription(message.serverContent.inputTranscription.text, true);
-        if (message.serverContent?.turnComplete) callbacks.onTurnComplete();
-      },
-      onclose: callbacks.onClose,
-      onerror: callbacks.onError,
-    },
-    config: {
-      responseModalities: [Modality.AUDIO],
-      speechConfig: {
-        voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } },
-      },
-      systemInstruction: getSystemInstruction(projects),
-      tools: [{ functionDeclarations: [searchProjectHistoryTool] }],
-      outputAudioTranscription: {},
-      inputAudioTranscription: {},
-    }
-  });
-
-  return sessionPromise;
-};
-
-/**
  * Transcribes a recorded voice clip (MediaRecorder) into plain text.
- * This avoids fragile realtime mic streaming and is far more reliable across browsers.
+ * This is the core of the turn-based voice flow.
  */
 export const transcribeVoiceClip = async (
   audioBytes: Uint8Array,
@@ -197,7 +129,7 @@ export const transcribeVoiceClip = async (
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.0-flash-exp',
+      model: TEXT_MODEL,
       contents: [
         {
           parts: [
@@ -228,37 +160,45 @@ export const transcribeVoiceClip = async (
 };
 
 /**
- * Generates Audio from text using Gemini TTS (One-off)
+ * Sends a voice message (audio blob) and returns the AI response text.
+ * This is the main turn-based voice interaction function.
  */
-export const generateSpeech = async (text: string): Promise<Uint8Array | null> => {
-  const apiKey = getApiKey();
-  if (!apiKey) return null;
+export const sendVoiceMessage = async (
+  audioBlob: Blob,
+  chat: Chat | null,
+  onToolCall?: (name: string, args: any) => Promise<any>
+): Promise<{ transcript: string; response: string }> => {
+  if (!chat) {
+    return { transcript: "", response: "AI Service not initialized." };
+  }
 
-  const ai = new GoogleGenAI({ apiKey });
   try {
-    const response = await ai.models.generateContent({
-      model: TTS_MODEL,
-      contents: [{ parts: [{ text: `Read this project report clearly: ${text}` }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: 'Charon' },
-          },
-        },
-      },
-    });
+    // Convert blob to bytes
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const audioBytes = new Uint8Array(arrayBuffer);
+    const mimeType = audioBlob.type || "audio/webm";
 
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    if (base64Audio) return decodeBase64(base64Audio);
-    return null;
-  } catch (error) {
-    console.error("TTS Error:", error);
-    return null;
+    // Step 1: Transcribe the audio
+    const transcript = await transcribeVoiceClip(audioBytes, mimeType);
+    if (!transcript) {
+      return { transcript: "", response: "Could not transcribe audio. Please try again." };
+    }
+
+    // Step 2: Send transcript to chat and get response
+    const response = await sendChatMessage(chat, transcript, onToolCall);
+
+    return { transcript, response };
+  } catch (error: any) {
+    console.error("Voice message error:", error);
+    return { transcript: "", response: `Error: ${error.message || "Voice processing failed."}` };
   }
 };
 
 // --- Audio Utilities ---
+
+/**
+ * Encodes a Uint8Array to Base64 string
+ */
 export function encode(bytes: Uint8Array): string {
   let binary = '';
   const len = bytes.byteLength;
@@ -266,30 +206,50 @@ export function encode(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-export function decodeBase64(base64: string): Uint8Array {
-  const binaryString = atob(base64);
-  const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
-  return bytes;
-}
+/**
+ * Speaks text aloud using browser's native speech synthesis
+ */
+export const speakText = (text: string): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    if (!window.speechSynthesis) {
+      console.warn("Speech synthesis not supported");
+      resolve();
+      return;
+    }
 
-export async function decodeAudioData(data: Uint8Array, ctx: AudioContext, sampleRate: number, numChannels: number): Promise<AudioBuffer> {
-  const dataInt16 = new Int16Array(data.buffer);
-  const frameCount = dataInt16.length / numChannels;
-  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
-  for (let channel = 0; channel < numChannels; channel++) {
-    const channelData = buffer.getChannelData(channel);
-    for (let i = 0; i < frameCount; i++) channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+    // Cancel any ongoing speech
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+
+    // Try to get a good English voice
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(v => 
+      v.lang.startsWith('en') && (v.name.includes('Google') || v.name.includes('Samantha'))
+    ) || voices.find(v => v.lang.startsWith('en'));
+    
+    if (preferredVoice) {
+      utterance.voice = preferredVoice;
+    }
+
+    utterance.onend = () => resolve();
+    utterance.onerror = (e) => {
+      console.error("Speech error:", e);
+      resolve(); // Resolve anyway to not block the flow
+    };
+
+    window.speechSynthesis.speak(utterance);
+  });
+};
+
+/**
+ * Stops any ongoing speech
+ */
+export const stopSpeaking = () => {
+  if (window.speechSynthesis) {
+    window.speechSynthesis.cancel();
   }
-  return buffer;
-}
-
-export async function playRawPcm(data: Uint8Array, sampleRate: number = 24000) {
-  const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate });
-  const audioBuffer = await decodeAudioData(data, ctx, sampleRate, 1);
-  const source = ctx.createBufferSource();
-  source.buffer = audioBuffer;
-  source.connect(ctx.destination);
-  source.start();
-}
+};
