@@ -158,39 +158,46 @@ export const transcribeVoiceClip = async (
   }
 };
 
-/**
- * Sends a voice message (audio blob) and returns the AI response text.
- * This is the main turn-based voice interaction function.
- */
 export const sendVoiceMessage = async (
   audioBlob: Blob,
-  chat: Chat | null,
+  chatSession: any,
   onToolCall?: (name: string, args: any) => Promise<any>
-): Promise<{ transcript: string; response: string }> => {
-  if (!chat) {
-    return { transcript: "", response: "AI Service not initialized." };
+) => {
+  // Convert audio to base64
+  const reader = new FileReader();
+  const audioBase64 = await new Promise<string>((resolve, reject) => {
+    reader.onloadend = () => {
+      const result = reader.result as string;
+      resolve(result.split(',')[1]);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(audioBlob);
+  });
+
+  const messages = chatSession.history.map((m: any) => ({
+    role: m.role,
+    parts: [{ text: m.parts?.[0]?.text || '' }],
+  }));
+
+  const res = await fetch('/.netlify/functions/gemini', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      audioBase64,
+      messages,
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error('Voice request failed');
   }
 
-  try {
-    // Convert blob to bytes
-    const arrayBuffer = await audioBlob.arrayBuffer();
-    const audioBytes = new Uint8Array(arrayBuffer);
-    const mimeType = audioBlob.type || "audio/webm";
+  const data = await res.json();
 
-    // Step 1: Transcribe the audio
-    const transcript = await transcribeVoiceClip(audioBytes, mimeType);
-    if (!transcript) {
-      return { transcript: "", response: "Could not transcribe audio. Please try again." };
-    }
-
-    // Step 2: Send transcript to chat and get response
-    const response = await sendChatMessage(chat, transcript, onToolCall);
-
-    return { transcript, response };
-  } catch (error: any) {
-    console.error("Voice message error:", error);
-    return { transcript: "", response: `Error: ${error.message || "Voice processing failed."}` };
-  }
+  return {
+    transcript: '🎤 Voice message',
+    response: data.text,
+  };
 };
 
 // --- Audio Utilities ---

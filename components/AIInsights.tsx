@@ -261,13 +261,13 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
   const getVoiceButtonText = () => {
     switch (voiceState) {
       case 'recording':
-        return 'STOP RECORDING';
+        return 'FINISHED';
       case 'processing':
         return 'PROCESSING...';
       case 'speaking':
         return 'STOP SPEAKING';
       default:
-        return 'RECORD VOICE';
+        return 'SPEAK';
     }
   };
 
