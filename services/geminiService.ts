@@ -8,19 +8,12 @@ const TTS_MODEL = 'gemini-2.5-flash-preview-tts';
 const LIVE_MODEL = 'gemini-2.5-flash-native-audio-preview-09-2025';
 
 const getApiKey = () => {
-  let apiKey: string | undefined;
-  try {
-    const rawKey = process.env.API_KEY;
-    if (rawKey) {
-      const clean = rawKey.toString().trim().replace(/^["']|["']$/g, '');
-      if (clean !== 'undefined' && clean !== 'null' && clean.length > 20) {
-        apiKey = clean;
-      }
-    }
-  } catch (e) {
-    console.warn("Error reading API_KEY:", e);
+  const key = import.meta.env.VITE_GEMINI_API_KEY;
+  if (!key || key.length < 20) {
+    console.error("Gemini API key missing at runtime");
+    return undefined;
   }
-  return apiKey;
+  return key;
 };
 
 // Tool Definition for searching the spreadsheet
