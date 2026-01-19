@@ -1,6 +1,5 @@
 
-
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 export type MicPermissionState =
   | 'unknown'
@@ -11,6 +10,9 @@ export type MicPermissionState =
 export function useMicrophonePermission() {
   const [state, setState] = useState<MicPermissionState>('unknown');
   const [lastError, setLastError] = useState<Error | null>(null);
+
+  const visibilityRecoveredRef = useRef(false);
+  const requestingRef = useRef(false);
 
   // Check if permission was already granted (no prompt needed)
   const checkExistingPermission = useCallback(async () => {
@@ -31,28 +33,39 @@ export function useMicrophonePermission() {
     }
   }, []);
 
-  // Request microphone access with silent retry
+  // Request microphone access with hardened duplicate/overlay handling
   const requestPermission = useCallback(async () => {
+    if (requestingRef.current) return false;
+    requestingRef.current = true;
+
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
       setState('granted');
+      requestingRef.current = false;
       return true;
     } catch (err: any) {
-      // Silent retry for transient Android overlay states
-      try {
-        await new Promise(res => setTimeout(res, 400));
-        await navigator.mediaDevices.getUserMedia({ audio: true });
-        setState('granted');
-        return true;
-      } catch (retryErr: any) {
-        setLastError(retryErr);
-        if (retryErr?.name === 'NotAllowedError') {
-          setState('blocked');
-        } else {
-          setState('error');
+      // Android/PWA transient overlay recovery
+      if (!visibilityRecoveredRef.current) {
+        try {
+          await new Promise(res => setTimeout(res, 500));
+          await navigator.mediaDevices.getUserMedia({ audio: true });
+          setState('granted');
+          requestingRef.current = false;
+          return true;
+        } catch {
+          // fall through
         }
-        return false;
       }
+
+      if (err?.name === 'NotAllowedError') {
+        setState('blocked');
+      } else {
+        setState('error');
+        setLastError(err);
+      }
+
+      requestingRef.current = false;
+      return false;
     }
   }, []);
 
@@ -60,6 +73,23 @@ export function useMicrophonePermission() {
   useEffect(() => {
     checkExistingPermission();
   }, [checkExistingPermission]);
+
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        visibilityRecoveredRef.current = true;
+
+        // If we previously thought we were blocked, re-check safely
+        if (state === 'blocked') {
+          checkExistingPermission();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () =>
+      document.removeEventListener('visibilitychange', handleVisibility);
+  }, [state, checkExistingPermission]);
 
   return {
     state,

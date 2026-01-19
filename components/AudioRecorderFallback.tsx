@@ -1,5 +1,3 @@
-
-
 import React, { useRef } from 'react';
 
 type Props = {
@@ -24,9 +22,9 @@ export const AudioRecorderFallback: React.FC<Props> = ({
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
     >
-      <div className="w-full sm:max-w-md bg-slate-950 border border-slate-800 rounded-t-2xl sm:rounded-2xl p-5">
+      <div className="w-full sm:max-w-md bg-slate-950 border border-slate-800 rounded-2xl p-5">
         <h2 className="text-lg font-semibold text-white mb-2">
           Record a voice message
         </h2>
