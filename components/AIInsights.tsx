@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+  import React, { useState, useEffect, useRef } from 'react';
 import { ProjectAnalysis, ChatMessage } from '../types';
 import { 
   createProjectChatSession, 
@@ -8,7 +8,8 @@ import {
   connectToLiveAnalyst,
   encode,
   decodeBase64,
-  decodeAudioData
+  decodeAudioData,
+  transcribeVoiceClip,
 } from '../services/geminiService';
 import { searchProjectsInSheet } from '../services/dataService';
 import { Chat } from "@google/genai";
@@ -31,6 +32,9 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
   const [liveTranscription, setLiveTranscription] = useState('');
   const [isLiveActive, setIsLiveActive] = useState(false);
   const [showVoiceRecovery, setShowVoiceRecovery] = useState(false);
+  const [isClipRecording, setIsClipRecording] = useState(false);
+  const [isClipProcessing, setIsClipProcessing] = useState(false);
+  const [clipError, setClipError] = useState<string | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -40,6 +44,81 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
   const liveSessionRef = useRef<any>(null);
   const sessionReadyRef = useRef(false);
   const audioBufferQueueRef = useRef<Uint8Array[]>([]);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const pickRecorderMimeType = () => {
+    const candidates = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+      'audio/aac',
+    ];
+    for (const t of candidates) {
+      try {
+        if ((window as any).MediaRecorder && MediaRecorder.isTypeSupported(t)) return t;
+      } catch {}
+    }
+    return '';
+  };
+
+  const startClipRecording = async () => {
+    setClipError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = pickRecorderMimeType();
+      recordedChunksRef.current = [];
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e: BlobEvent) => {
+        if (e.data && e.data.size > 0) recordedChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        try {
+          setIsClipProcessing(true);
+          stream.getTracks().forEach(t => t.stop());
+          const blob = new Blob(recordedChunksRef.current, { type: recorder.mimeType || mimeType || 'audio/webm' });
+          const buf = await blob.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          const transcript = await transcribeVoiceClip(bytes, blob.type || recorder.mimeType || mimeType || 'audio/webm');
+          if (!transcript) {
+            setClipError("I couldn't transcribe that. Please try again.");
+            setIsClipProcessing(false);
+            return;
+          }
+          if (!chatSession) {
+            setClipError("AI service not initialized.");
+            setIsClipProcessing(false);
+            return;
+          }
+          setMessages(prev => [...prev, { role: 'user', text: transcript, timestamp: new Date() }]);
+          const reply = await sendChatMessage(chatSession, transcript, async (name, args) => await handleToolCall({ name, args }));
+          setMessages(prev => [...prev, { role: 'model', text: reply, timestamp: new Date() }]);
+          setIsClipProcessing(false);
+        } catch (e) {
+          console.error(e);
+          setClipError('Voice processing failed.');
+          setIsClipProcessing(false);
+        }
+      };
+
+      recorder.start(250);
+      setIsClipRecording(true);
+    } catch (e) {
+      console.error(e);
+      setClipError('Microphone unavailable.');
+    }
+  };
+
+  const stopClipRecording = () => {
+    try {
+      const r = mediaRecorderRef.current;
+      if (r && r.state !== 'inactive') r.stop();
+    } finally {
+      setIsClipRecording(false);
+    }
+  };
 
   useEffect(() => {
     if (projects.length > 0) {
@@ -289,15 +368,34 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ projects }) => {
         </div>
 
         <div className="bg-slate-900 p-4 border-b-2 border-slate-950 flex gap-4">
-            <button 
-              onClick={() => isLiveActive ? stopLiveMode() : startLiveMode()}
+            <button
+              onClick={() => {
+                if (isClipProcessing) return;
+                if (isClipRecording) stopClipRecording();
+                else startClipRecording();
+              }}
               className={`flex-1 py-5 rounded-2xl font-black uppercase tracking-widest text-sm transition-all shadow-xl border-2 flex items-center justify-center gap-3 ${
-                isLiveActive ? 'bg-red-600 border-red-500 text-white' : 'bg-indigo-600 border-indigo-500 text-white'
+                isClipProcessing
+                  ? 'bg-indigo-400 border-indigo-400 text-white'
+                  : isClipRecording
+                  ? 'bg-red-600 border-red-500 text-white'
+                  : 'bg-indigo-600 border-indigo-500 text-white'
               }`}
             >
-              {isLiveActive ? 'DISCONNECT' : 'VOICE CHAT'}
+              {isClipProcessing
+                ? 'PROCESSING...'
+                : isClipRecording
+                ? 'STOP RECORDING'
+                : 'RECORD VOICE'}
             </button>
         </div>
+
+        {(isClipProcessing || clipError) && (
+          <div className="px-6 pb-2 text-sm">
+            {isClipProcessing && <div className="text-slate-300">Transcribing your message...</div>}
+            {clipError && <div className="text-red-400 font-semibold">{clipError}</div>}
+          </div>
+        )}
 
         <div className="flex-1 flex flex-col min-h-0 bg-slate-950/80">
           {isLiveMode ? (
